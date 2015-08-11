@@ -1,0 +1,5 @@
+Code to generate the script to calculate the elastic constants
+of a crystal by using vasp.
+
+Author LT Kong, konglt@sjtu.edu.cn
+(C) Aug 2015
