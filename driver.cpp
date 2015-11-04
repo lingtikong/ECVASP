@@ -7,6 +7,7 @@
 #define ZERO 1.e-10
 #define MAXLINE 1024
 #define STRAIN 0.008
+#define NSRATIO 1.8
 
 /*------------------------------------------------------------------------------
  * Constructor of driver, main menu
@@ -30,7 +31,7 @@ Driver::Driver(int narg, char** arg)
       int n = strlen(arg[iarg]);
       if (fname) delete []fname;
       fname = new char [n+1];
-      strcmp(fname, arg[iarg]);
+      strcpy(fname, arg[iarg]);
 
     } else if (strcmp(arg[iarg], "-e") == 0){ // global displacement
       if (++iarg >= narg) help();
@@ -90,7 +91,7 @@ Driver::Driver(int narg, char** arg)
   // set default values
   if (disp[0] < ZERO) disp[0] = STRAIN;
   for (int i = 1; i <= 3; ++i) if (disp[i] < ZERO) disp[i] = disp[0];
-  for (int i = 4; i <= 6; ++i) if (disp[i] < ZERO) disp[i] = disp[0]*1.6;
+  for (int i = 4; i <= 6; ++i) if (disp[i] < ZERO) disp[i] = disp[0]*NSRATIO;
 
   if (fname == NULL){
     fname = new char[6];
@@ -99,7 +100,7 @@ Driver::Driver(int narg, char** arg)
 
   memory = new Memory();
   // read the POSCAR
-  if ( readpos() ) return;
+  if ( readpos() ) help();
 
   // write the script
   generate();
@@ -237,18 +238,19 @@ void Driver::generate()
   fprintf(fp,"#!/bin/bash\n#\n# Script to compute the elastic constants based on VASP.\n");
   fprintf(fp,"#===========================================================================\n");
   fprintf(fp,"# Extremely accurate stress calculations are needed to get reliable results.\n");
-  fprintf(fp,"# Suggested settings for INCAR:\n");
+  fprintf(fp,"# 1, Suggested settings for INCAR:\n");
   fprintf(fp,"#     PREC   = high\n");
   fprintf(fp,"#     ENCUT  = 1.5*ENMAX\n");
   fprintf(fp,"#     ISMEAR = 2   # for metals; \n");
   fprintf(fp,"#     SIGMA  = 0.2 # for metals;\n#\n");
   fprintf(fp,"#     ISMEAR = -5  # for insulators.\n");
-  fprintf(fp,"#\n# The strain should be large enough to avoid noise, but small enough to\n");
+  fprintf(fp,"#\n# 2, Dense enough k-mesh.\n");
+  fprintf(fp,"#\n# 3, The strain should be large enough to avoid noise, but small enough to\n");
   fprintf(fp,"#  keep elasticity.\n");
   fprintf(fp,"#===========================================================================\n");
   fprintf(fp,"if [ %c$#%c -gt %c0%c ]; then\n", char(34), char(34), char(34), char(34));
   fprintf(fp,"   np=$1\nelse\n   np=2\nfi\n#\n");
-  fprintf(fp,"if [ -f %cPOSCAR%c ]; then\n", char(34), char(34));
+  fprintf(fp,"if [[ -f %cPOSCAR%c && ! -f \"POSCAR_ini\" ]]; then\n", char(34), char(34));
   fprintf(fp,"   cp POSCAR POSCAR_ini\nfi\n#\n");
   fprintf(fp,"VASP=%cmpirun -np ${np} v533%c\n", char(34), char(34));
   fprintf(fp,"#\necho %cThe as-provided configuration (equilibrium state expected)%c\n", char(34), char(34));
@@ -266,6 +268,7 @@ void Driver::generate()
   fprintf(fp,"echo %c0   0  ${pxx0} ${pyy0} ${pzz0} ${pxy0} ${pxz0} ${pyz0} ${eng0}%c\n", char(34), char(34));
   fprintf(fp,"echo %c# Information on elastic constants calculations, since: `date`%c >> info.dat\n", char(34), char(34));
   fprintf(fp,"echo %c0   0  ${pxx0} ${pyy0} ${pzz0} ${pxy0} ${pxz0} ${pyz0} ${eng0}%c >> info.dat\n", char(34), char(34));
+  fprintf(fp,"cp -p DOSCAR DOSCAR.eq\n");
   
   double eps[7];
   for (int idim = 1; idim <= 6; ++idim){
@@ -293,15 +296,16 @@ void Driver::generate()
     fprintf(fp,"pxy=`echo ${press}|awk '{print $6}'`\n");
     fprintf(fp,"pyz=`echo ${press}|awk '{print $7}'`\n");
     fprintf(fp,"pxz=`echo ${press}|awk '{print $8}'`\n");
-    fprintf(fp,"C1%dpos=`echo ${pxx} ${pxx0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C2%dpos=`echo ${pyy} ${pyy0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C3%dpos=`echo ${pzz} ${pzz0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C4%dpos=`echo ${pyz} ${pyz0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C5%dpos=`echo ${pxz} ${pxz0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C6%dpos=`echo ${pxy} ${pxy0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
+    fprintf(fp,"C1%dpos=`echo ${pxx} ${pxx0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C2%dpos=`echo ${pyy} ${pyy0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C3%dpos=`echo ${pzz} ${pzz0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C4%dpos=`echo ${pyz} ${pyz0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C5%dpos=`echo ${pxz} ${pxz0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C6%dpos=`echo ${pxy} ${pxy0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
     fprintf(fp,"eng%dp=`grep 'energy  without' OUTCAR|tail -1|awk '{print $4}'`\n", idim);
-    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dp}%c\n", char(34), idim, eps[idim], idim, char(34));
-    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dp}%c >> info.dat\n", char(34), idim, eps[idim], idim, char(34));
+    fprintf(fp,"mag=`tail -1 OSZICAR|grep 'mag'|awk '{print $10}'`\n");
+    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dp} ${mag}%c\n", char(34), idim, eps[idim], idim, char(34));
+    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dp} ${mag}%c >> info.dat\n", char(34), idim, eps[idim], idim, char(34));
 
     eps[idim] = -disp[idim];
     fprintf(fp,"# Now to compute that for eps = [%g %g %g %g %g %g]\necho\n",  eps[1], eps[2], eps[3], eps[4], eps[5], eps[6]);
@@ -322,46 +326,47 @@ void Driver::generate()
     fprintf(fp,"pxy=`echo ${press}|awk '{print $6}'`\n");
     fprintf(fp,"pyz=`echo ${press}|awk '{print $7}'`\n");
     fprintf(fp,"pxz=`echo ${press}|awk '{print $8}'`\n");
-    fprintf(fp,"C1%dneg=`echo ${pxx} ${pxx0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C2%dneg=`echo ${pyy} ${pyy0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C3%dneg=`echo ${pzz} ${pzz0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C4%dneg=`echo ${pyz} ${pyz0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C5%dneg=`echo ${pxz} ${pxz0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
-    fprintf(fp,"C6%dneg=`echo ${pxy} ${pxy0} ${eps} | awk '{print ($2 - $1)/$3}'`\n", idim);
+    fprintf(fp,"C1%dneg=`echo ${pxx} ${pxx0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C2%dneg=`echo ${pyy} ${pyy0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C3%dneg=`echo ${pzz} ${pzz0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C4%dneg=`echo ${pyz} ${pyz0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C5%dneg=`echo ${pxz} ${pxz0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
+    fprintf(fp,"C6%dneg=`echo ${pxy} ${pxy0} ${eps} | awk '{print ($2 - ($1))/($3)}'`\n", idim);
     fprintf(fp,"eng%dn=`grep 'energy  without' OUTCAR|tail -1|awk '{print $4}'`\n", idim);
-    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dp}%c\n", char(34), idim, eps[idim], idim, char(34));
-    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dn}%c >> info.dat\n", char(34), idim, eps[idim], idim, char(34));
+    fprintf(fp,"mag=`tail -1 OSZICAR|grep 'mag'|awk '{print $10}'`\n");
+    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dn} ${mag}%c\n", char(34), idim, eps[idim], idim, char(34));
+    fprintf(fp,"echo %c%d %g  ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz} ${eng%dn} ${mag}%c >> info.dat\n", char(34), idim, eps[idim], idim, char(34));
 
-    fprintf(fp,"C1%d=`echo ${C1%dpos} ${C1%dneg}|awk '{print ($1+$2)/2}'`\n", idim, idim, idim);
-    fprintf(fp,"C2%d=`echo ${C2%dpos} ${C2%dneg}|awk '{print ($1+$2)/2}'`\n", idim, idim, idim);
-    fprintf(fp,"C3%d=`echo ${C3%dpos} ${C3%dneg}|awk '{print ($1+$2)/2}'`\n", idim, idim, idim);
-    fprintf(fp,"C4%d=`echo ${C4%dpos} ${C4%dneg}|awk '{print ($1+$2)/2}'`\n", idim, idim, idim);
-    fprintf(fp,"C5%d=`echo ${C5%dpos} ${C5%dneg}|awk '{print ($1+$2)/2}'`\n", idim, idim, idim);
-    fprintf(fp,"C6%d=`echo ${C6%dpos} ${C6%dneg}|awk '{print ($1+$2)/2}'`\n", idim, idim, idim);
+    fprintf(fp,"C1%d=`echo ${C1%dpos} ${C1%dneg}|awk '{print ($1+$2)/2.}'`\n", idim, idim, idim);
+    fprintf(fp,"C2%d=`echo ${C2%dpos} ${C2%dneg}|awk '{print ($1+$2)/2.}'`\n", idim, idim, idim);
+    fprintf(fp,"C3%d=`echo ${C3%dpos} ${C3%dneg}|awk '{print ($1+$2)/2.}'`\n", idim, idim, idim);
+    fprintf(fp,"C4%d=`echo ${C4%dpos} ${C4%dneg}|awk '{print ($1+$2)/2.}'`\n", idim, idim, idim);
+    fprintf(fp,"C5%d=`echo ${C5%dpos} ${C5%dneg}|awk '{print ($1+$2)/2.}'`\n", idim, idim, idim);
+    fprintf(fp,"C6%d=`echo ${C6%dpos} ${C6%dneg}|awk '{print ($1+$2)/2.}'`\n", idim, idim, idim);
   }
 
-  fprintf(fp,"C11all=`echo ${C11}|awk '{print $1/10}'`\n");
-  fprintf(fp,"C22all=`echo ${C22}|awk '{print $1/10}'`\n");
-  fprintf(fp,"C33all=`echo ${C33}|awk '{print $1/10}'`\n");
-  fprintf(fp,"C12all=`echo ${C12} ${C21}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C13all=`echo ${C13} ${C31}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C23all=`echo ${C23} ${C32}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C44all=`echo ${C44}|awk '{print $1/10}'`\n");
-  fprintf(fp,"C55all=`echo ${C55}|awk '{print $1/10}'`\n");
-  fprintf(fp,"C66all=`echo ${C66}|awk '{print $1/10}'`\n");
+  fprintf(fp,"C11all=`echo ${C11}|awk '{print $1/10.}'`\n");
+  fprintf(fp,"C22all=`echo ${C22}|awk '{print $1/10.}'`\n");
+  fprintf(fp,"C33all=`echo ${C33}|awk '{print $1/10.}'`\n");
+  fprintf(fp,"C12all=`echo ${C12} ${C21}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C13all=`echo ${C13} ${C31}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C23all=`echo ${C23} ${C32}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C44all=`echo ${C44}|awk '{print $1/10.}'`\n");
+  fprintf(fp,"C55all=`echo ${C55}|awk '{print $1/10.}'`\n");
+  fprintf(fp,"C66all=`echo ${C66}|awk '{print $1/10.}'`\n");
 
-  fprintf(fp,"C14all=`echo ${C14} ${C41}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C15all=`echo ${C15} ${C51}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C16all=`echo ${C16} ${C61}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C24all=`echo ${C24} ${C42}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C25all=`echo ${C25} ${C52}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C26all=`echo ${C26} ${C62}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C34all=`echo ${C34} ${C43}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C35all=`echo ${C35} ${C53}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C36all=`echo ${C36} ${C63}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C45all=`echo ${C45} ${C54}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C46all=`echo ${C46} ${C64}|awk '{print ($1+$2)/20}'`\n");
-  fprintf(fp,"C56all=`echo ${C56} ${C65}|awk '{print ($1+$2)/20}'`\n");
+  fprintf(fp,"C14all=`echo ${C14} ${C41}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C15all=`echo ${C15} ${C51}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C16all=`echo ${C16} ${C61}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C24all=`echo ${C24} ${C42}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C25all=`echo ${C25} ${C52}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C26all=`echo ${C26} ${C62}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C34all=`echo ${C34} ${C43}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C35all=`echo ${C35} ${C53}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C36all=`echo ${C36} ${C63}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C45all=`echo ${C45} ${C54}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C46all=`echo ${C46} ${C64}|awk '{print ($1+$2)/20.}'`\n");
+  fprintf(fp,"C56all=`echo ${C56} ${C65}|awk '{print ($1+$2)/20.}'`\n");
 
   fprintf(fp, "echo Elastic Constant C11 = ${C11all} GPa >> info.dat\n");
   fprintf(fp, "echo Elastic Constant C22 = ${C22all} GPa >> info.dat\n");
@@ -384,13 +389,56 @@ void Driver::generate()
   fprintf(fp, "echo Elastic Constant C45 = ${C45all} GPa >> info.dat\n");
   fprintf(fp, "echo Elastic Constant C46 = ${C46all} GPa >> info.dat\n");
   fprintf(fp, "echo Elastic Constant C56 = ${C56all} GPa >> info.dat\n");
-  fprintf(fp, "echo # The elastic constant matrix:       >> info.dat\n");
+  fprintf(fp, "echo \'# The elastic constant matrix:\'   >> info.dat\n");
   fprintf(fp, "echo ${C11all}|awk '{printf %c%%9.4f\\n%c, $1}' >> info.dat\n", char(34),char(34));
   fprintf(fp, "echo ${C12all} ${C22all}|awk '{printf %c%%9.4f %%9.4f\\n%c, $1,$2}' >> info.dat\n", char(34),char(34));
   fprintf(fp, "echo ${C13all} ${C23all} ${C33all}|awk '{printf %c%%9.4f %%9.4f %%9.4f\\n%c, $1,$2,$3}' >> info.dat\n", char(34),char(34));
   fprintf(fp, "echo ${C14all} ${C24all} ${C34all} ${C44all}|awk '{printf %c%%9.4f %%9.4f %%9.4f %%9.4f\\n%c, $1,$2,$3,$4}' >> info.dat\n", char(34),char(34));
   fprintf(fp, "echo ${C15all} ${C25all} ${C35all} ${C45all} ${C55all}|awk '{printf %c%%9.4f %%9.4f %%9.4f %%9.4f %%9.4f\\n%c, $1,$2,$3,$4,$5}' >> info.dat\n", char(34),char(34));
   fprintf(fp, "echo ${C16all} ${C26all} ${C36all} ${C46all} ${C56all} ${C66all}|awk '{printf %c%%9.4f %%9.4f %%9.4f %%9.4f %%9.4f %%9.4f\\n%c, $1,$2,$3,$4,$5,$6}' >> info.dat\n", char(34),char(34));
+  fprintf(fp, "echo ${C11all} ${C12all} ${C13all} ${C14all} ${C15all} ${C16all}|awk '{printf \"%%12.6f %%12.6f %%12.6f %%12.6f %%12.6f %%12.6f\\n\", $1, $2, $3, $4, $5, $6}' > .elas.mat.dat\n");
+  fprintf(fp, "echo ${C12all} ${C22all} ${C23all} ${C24all} ${C25all} ${C26all}|awk '{printf \"%%12.6f %%12.6f %%12.6f %%12.6f %%12.6f %%12.6f\\n\", $1, $2, $3, $4, $5, $6}' >>.elas.mat.dat\n");
+  fprintf(fp, "echo ${C13all} ${C23all} ${C33all} ${C34all} ${C35all} ${C36all}|awk '{printf \"%%12.6f %%12.6f %%12.6f %%12.6f %%12.6f %%12.6f\\n\", $1, $2, $3, $4, $5, $6}' >>.elas.mat.dat\n");
+  fprintf(fp, "echo ${C14all} ${C24all} ${C34all} ${C44all} ${C45all} ${C46all}|awk '{printf \"%%12.6f %%12.6f %%12.6f %%12.6f %%12.6f %%12.6f\\n\", $1, $2, $3, $4, $5, $6}' >>.elas.mat.dat\n");
+  fprintf(fp, "echo ${C15all} ${C25all} ${C35all} ${C45all} ${C55all} ${C56all}|awk '{printf \"%%12.6f %%12.6f %%12.6f %%12.6f %%12.6f %%12.6f\\n\", $1, $2, $3, $4, $5, $6}' >>.elas.mat.dat\n");
+  fprintf(fp, "echo ${C16all} ${C26all} ${C36all} ${C46all} ${C56all} ${C66all}|awk '{printf \"%%12.6f %%12.6f %%12.6f %%12.6f %%12.6f %%12.6f\\n\", $1, $2, $3, $4, $5, $6}' >>.elas.mat.dat\n");
+  fprintf(fp, "invmat -i .elas.mat.dat -o .elas.inv.mat.dat -n 6\n");
+  fprintf(fp, "S11=`head -1 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $1}'`\n");
+  fprintf(fp, "S12=`head -1 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $2}'`\n");
+  fprintf(fp, "S13=`head -1 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $3}'`\n");
+  fprintf(fp, "S22=`head -2 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $2}'`\n");
+  fprintf(fp, "S23=`head -2 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $3}'`\n");
+  fprintf(fp, "S33=`head -3 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $3}'`\n");
+  fprintf(fp, "S44=`head -4 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $4}'`\n");
+  fprintf(fp, "S55=`head -5 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $5}'`\n");
+  fprintf(fp, "S66=`head -6 .elas.inv.mat.dat |tail -1|awk '{printf \"%%16.10f\", $6}'`\n");
+  fprintf(fp, "KV=`echo ${C11all} ${C22all} ${C33all} ${C12all} ${C23all} ${C13all}|awk '{printf \"%%12.6f\", ($1+$2+$3+2.*($4+$5+$6))/9.}'`\n");
+  fprintf(fp, "GV=`echo ${C11all} ${C22all} ${C33all} ${C12all} ${C23all} ${C13all} ${C44all} ${C55all} ${C66all}|awk '{printf \"%%12.6f\", ($1+$2+$3-($4+$5+$6)+3.*($7+$8+$9))/15.}'`\n");
+  fprintf(fp, "KR=`echo ${S11} ${S22} ${S33} ${S12} ${S23} ${S13} |awk '{printf \"%%12.6f\", 1./(($1+$2+$3)+2.*($4+$5+$6))}'`\n");
+  fprintf(fp, "GR=`echo ${S11} ${S22} ${S33} ${S12} ${S23} ${S13} ${S44} ${S55} ${S66}|awk '{printf \"%%12.6f\", 15./(4.*($1+$2+$3)-4.*($4+$5+$6)+3.*($7+$8+$9))}'`\n");
+  fprintf(fp, "KVRH=`echo ${KV} ${KR} | awk '{printf \"%%12.6f\", ($1+$2)/2.}'`\n");
+  fprintf(fp, "GVRH=`echo ${GV} ${GR} | awk '{printf \"%%12.6f\", ($1+$2)/2.}'`\n");
+  fprintf(fp, "ZENE=`echo ${C44} ${C11} ${C12}|awk '{printf \"%%12.6f\", 2*$1/($2-$3)}'`\n");
+  fprintf(fp, "UNIV=`echo ${GV} ${GR} ${KV} ${KR}|awk '{printf \"%%12.6f\", 5.*$1/($2) + $3/$4-6.}'`\n");
+  fprintf(fp, "POIS=`echo ${KVRH} ${GVRH}|awk '{printf \"%%12.6f\", (3.*$1-2.*$2)/(6.*$1+2.*$2)}'`\n");
+  fprintf(fp, "POI2=`echo ${KVRH} ${GVRH}|awk '{printf \"%%12.6f\", 0.5*($1-2./3.*$2)/($1+2./3.*$2)}'`\n");
+  fprintf(fp, "YOUN=`echo ${KVRH} ${GVRH}|awk '{printf \"%%12.6f\", 9.*$1*$2/($2+3.*$1)}'`\n");
+  fprintf(fp, "BRIT=`echo ${KVRH} ${GVRH}|awk '{printf \"%%12.6f\", $1/$2}'`\n");
+  fprintf(fp, "echo \"#-+------------------------------------------------------\" >> info.dat\n");
+  fprintf(fp, "echo \"   Voigt average bulk modulus (GPa)  : ${KV}\"   >> info.dat \n");
+  fprintf(fp, "echo \"   Reuss average bulk modulus        : ${KR}\"   >> info.dat \n");
+  fprintf(fp, "echo \"   Voigt-Reuss-Hill bulk modulus     : ${KVRH}\" >> info.dat \n");
+  fprintf(fp, "echo \"   Voigt average shear modulus       : ${GV}\"   >> info.dat \n");
+  fprintf(fp, "echo \"   Reuss average shear modulus       : ${GR}\"   >> info.dat \n");
+  fprintf(fp, "echo \"   Voigt-Reuss-Hill shear modulus    : ${GVRH}\" >> info.dat \n");
+  fprintf(fp, "echo \"   Zener anisotropy factor           : ${ZENE}\" >> info.dat \n");
+  fprintf(fp, "echo \"   Universal elastic anisotropy fact : ${UNIV}\" >> info.dat \n");
+  fprintf(fp, "echo \"   Isotropic Poisson ratio           : ${POIS}\" >> info.dat \n");
+  fprintf(fp, "echo \"   Poisson ratio of polycrystal      : ${POI2}\" >> info.dat \n");
+  fprintf(fp, "echo \"   Young's modulus of polycrystal    : ${YOUN}\" >> info.dat \n");
+  fprintf(fp, "echo \"   B/G ration (< 1.75, brittle)      : ${BRIT}\" >> info.dat \n");
+  fprintf(fp, "echo \"#-+------------------------------------------------------\" >> info.dat\n");
+  fprintf(fp, "rm -rf .elas.*mat.dat\n");
   fprintf(fp, "\ncat info.dat\n\n");
   fprintf(fp, "rm -rf CHG* CONTCAR EIGENVAL IBZKPT OSZICAR OUTCAR PCDAT vasprun.xml WAVECAR XDATCAR\n");
   fprintf(fp, "#\nexit 0\n");
@@ -442,13 +490,13 @@ void Driver::help()
   printf("\nCode to generate the script for elastic constants calculations based on vasp.\n");
   printf("\nUsage:\n    ecvasp [options] [poscar]\n\nAvailable options:\n");
   printf("    -h       To display this help info;\n");
-  printf("    -e       To define the default strain;\n");
-  printf("    -xx      To define the default strain of eps_{xx};\n");
-  printf("    -yy      To define the default strain of eps_{yy};\n");
-  printf("    -zz      To define the default strain of eps_{zz};\n");
-  printf("    -xy      To define the default strain of eps_{xy};\n");
-  printf("    -xz      To define the default strain of eps_{xz};\n");
-  printf("    -yz      To define the default strain of eps_{yz};\n");
+  printf("    -e       To define the strain; by default: %g\n", STRAIN);
+  printf("    -xx      To define the strain of eps_{xx}; by default: %g\n", STRAIN);
+  printf("    -yy      To define the strain of eps_{yy}; by default: %g\n", STRAIN);
+  printf("    -zz      To define the strain of eps_{zz}; by default: %g\n", STRAIN);
+  printf("    -xy      To define the strain of eps_{xy}; by default: %g\n", NSRATIO*STRAIN);
+  printf("    -xz      To define the strain of eps_{xz}; by default: %g\n", NSRATIO*STRAIN);
+  printf("    -yz      To define the strain of eps_{yz}; by default: %g\n", NSRATIO*STRAIN);
   printf("    poscar   POSCAR or CONTCAR of vasp; by default: POSCAR\n");
   printf("\n\n");
 
